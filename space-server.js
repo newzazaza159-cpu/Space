@@ -257,6 +257,32 @@ app.delete("/api/accounts/:name", requireAdmin, async (req, res) => {
     } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
+// ---------- ห้องเล่นกับเพื่อน (เก็บในหน่วยความจำ ไม่แตะ Drive / ไม่เกี่ยวกับเซฟ) ----------
+// โฮสต์ส่ง heartbeat ทุก ~8 วิ; ห้องที่เงียบเกิน 25 วิ ถือว่าปิดแล้ว
+const ROOM_TTL_MS = 25000, rooms = new Map(), roomHits = new Map();
+const roomLimit = (req, res, next) => {
+    const now = Date.now(), a = (roomHits.get(req.ip) || []).filter(t => now - t < 60000);
+    if (a.length >= 120) return res.status(429).json({ error: "ช้าลงหน่อย" });
+    a.push(now); roomHits.set(req.ip, a);
+    if (roomHits.size > 5000) for (const [k, v] of roomHits) if (!v.some(t => now - t < 60000)) roomHits.delete(k);
+    next();
+};
+const roomClean = () => { const now = Date.now(); for (const [c, r] of rooms) if (now - r.at > ROOM_TTL_MS) rooms.delete(c); };
+app.get("/api/rooms", roomLimit, (req, res) => {
+    roomClean(); res.set("Cache-Control", "no-store");
+    res.json({ rooms: Array.from(rooms.values()).filter(r => r.count < 2).map(r => ({ code: r.code, name: r.name, mission: r.mission, count: r.count })) });
+});
+app.post("/api/rooms/:code", roomLimit, (req, res) => {
+    const code = String(req.params.code || "").toUpperCase();
+    if (!/^[A-Z0-9]{4}$/.test(code)) return res.status(400).json({ error: "รหัสห้องไม่ถูกต้อง" });
+    roomClean(); if (!rooms.has(code) && rooms.size >= 300) return res.status(503).json({ error: "ห้องเต็ม" });
+    const b = req.body || {}, name = String(b.name || "").replace(/[<>&"'`]/g, "").trim().slice(0, 24) || ("ผู้เล่น " + code);
+    const mission = Math.max(0, Math.min(99, parseInt(b.mission, 10) || 0)), count = parseInt(b.count, 10) === 2 ? 2 : 1;
+    rooms.set(code, { code, name, mission, count, at: Date.now() });
+    res.json({ ok: true });
+});
+app.delete("/api/rooms/:code", roomLimit, (req, res) => { rooms.delete(String(req.params.code || "").toUpperCase()); res.json({ ok: true }); });
+
 app.get("/", (req, res) => res.send("Space Shooter sync server (Google Drive) is running."));
 
 if (require.main === module) {
