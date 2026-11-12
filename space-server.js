@@ -270,7 +270,7 @@ const roomLimit = (req, res, next) => {
 const roomClean = () => { const now = Date.now(); for (const [c, r] of rooms) if (now - r.at > ROOM_TTL_MS) rooms.delete(c); };
 app.get("/api/rooms", roomLimit, (req, res) => {
     roomClean(); res.set("Cache-Control", "no-store");
-    res.json({ rooms: Array.from(rooms.values()).filter(r => r.count < 2).map(r => ({ code: r.code, name: r.name, mission: r.mission, count: r.count })) });
+    res.json({ rooms: Array.from(rooms.values()).map(r => ({ code: r.code, name: r.name, mission: r.mission, count: r.count, playing: r.playing })) });   // แสดงทุกห้อง: รอ (count 1) / เต็ม (count 2) / กำลังเล่น (playing 1)
 });
 app.post("/api/rooms/:code", roomLimit, (req, res) => {
     const code = String(req.params.code || "").toUpperCase();
@@ -278,7 +278,8 @@ app.post("/api/rooms/:code", roomLimit, (req, res) => {
     roomClean(); if (!rooms.has(code) && rooms.size >= 300) return res.status(503).json({ error: "ห้องเต็ม" });
     const b = req.body || {}, name = String(b.name || "").replace(/[<>&"'`]/g, "").trim().slice(0, 24) || ("ผู้เล่น " + code);
     const mission = Math.max(0, Math.min(99, parseInt(b.mission, 10) || 0)), count = parseInt(b.count, 10) === 2 ? 2 : 1;
-    rooms.set(code, { code, name, mission, count, at: Date.now() });
+    const playing = (b.playing === 1 || b.playing === true || b.playing === "1") ? 1 : 0;
+    rooms.set(code, { code, name, mission, count, playing, at: Date.now() });
     res.json({ ok: true });
 });
 app.delete("/api/rooms/:code", roomLimit, (req, res) => { rooms.delete(String(req.params.code || "").toUpperCase()); res.json({ ok: true }); });
