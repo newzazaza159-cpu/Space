@@ -285,6 +285,32 @@ app.post("/api/rooms/:code", roomLimit, (req, res) => {
 });
 app.delete("/api/rooms/:code", roomLimit, (req, res) => { rooms.delete(String(req.params.code || "").toUpperCase()); res.json({ ok: true }); });
 
+// ---------- แชทล็อบบี้ (เก็บในหน่วยความจำ: รีสตาร์ทเซิร์ฟเวอร์แล้วหาย / ไม่แตะ Drive) ----------
+// GET อ่านได้ทุกคน; POST ต้องมี token ของบัญชี และชื่อที่ส่งมาต้องตรงกับบัญชีใน token
+const chatMsgs = [];
+let chatId = 0;
+const chatLast = new Map();   // กันสแปม: 1 ข้อความ / 1 วินาที ต่อบัญชี
+const chatClean = s => String(s || "").replace(/[<>&"'`\u0000-\u001f]/g, "").trim();
+app.get("/api/chat", roomLimit, (req, res) => {
+    const since = +req.query.since || 0;
+    res.set("Cache-Control", "no-store");
+    res.json({ msgs: chatMsgs.filter(m => m.id > since).slice(-50) });
+});
+app.post("/api/chat", requirePlayer, (req, res) => {
+    const now = Date.now(), key = req.playerKey;
+    if (now - (chatLast.get(key) || 0) < 1000) return res.status(429).json({ error: "ช้าหน่อย" });
+    const name = chatClean(req.body && req.body.name).slice(0, 24);
+    const text = chatClean(req.body && req.body.text).slice(0, 120);
+    if (!name || !text) return res.status(400).json({ error: "ข้อมูลไม่ครบ" });
+    if (nameKey(name) !== key) return res.status(403).json({ error: "ชื่อไม่ตรงกับบัญชี" });   // ชื่อในแชทต้องเป็นของบัญชีที่ล็อกอินอยู่
+    chatLast.set(key, now);
+    if (chatLast.size > 5000) for (const [k, t] of chatLast) if (now - t > 60000) chatLast.delete(k);
+    const m = { id: ++chatId, n: name, t: text, ts: now };
+    chatMsgs.push(m);
+    if (chatMsgs.length > 100) chatMsgs.shift();
+    res.json({ ok: true, id: m.id });
+});
+
 app.get("/", (req, res) => res.send("Space Shooter sync server (Google Drive) is running."));
 
 if (require.main === module) {
